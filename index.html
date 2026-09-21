@@ -4,14 +4,39 @@
 'use strict';
 const $=id=>document.getElementById(id),cv=$('game'),g=cv.getContext('2d');
 const stages=[
- {name:'외곽 진입로',route:[[2,3],[19,3],[19,15]],color:[106,113,87]},
- {name:'보급 창고',route:[[2,3],[10,3],[10,10],[20,10],[20,16]],color:[125,103,77]},
- {name:'지하 연결 통로',route:[[2,3],[20,3],[20,9],[3,9],[3,16],[20,16]],color:[82,106,120]},
- {name:'경비 구역',route:[[2,16],[9,16],[9,3],[20,3],[20,16]],color:[120,103,98]},
- {name:'최종 탈출로',route:[[2,3],[20,3],[20,9],[3,9],[3,16],[20,16]],color:[103,120,92]}
+ {name:'외곽 진입로',color:[106,113,87]},
+ {name:'보급 창고',color:[125,103,77]},
+ {name:'지하 연결 통로',color:[82,106,120]},
+ {name:'경비 구역',color:[120,103,98]},
+ {name:'최종 탈출로',color:[103,120,92]}
 ];
 let sprintTouch=false;let map=[],exitPoint={x:0,y:0},jumpZ=0,jumpV=0,exitReady=false;
-function buildStage(index){const cfg=stages[index],grid=Array.from({length:20},()=>Array(24).fill('1')),route=[];for(let i=0;i<cfg.route.length-1;i++){let [x,y]=cfg.route[i];const [tx,ty]=cfg.route[i+1],dx=Math.sign(tx-x),dy=Math.sign(ty-y);while(x!==tx||y!==ty){route.push([x,y]);x+=dx;y+=dy}}route.push(cfg.route.at(-1));for(const [x,y] of route)for(let oy=-1;oy<=1;oy++)for(let ox=-1;ox<=1;ox++)if(y+oy>0&&y+oy<19&&x+ox>0&&x+ox<23)grid[y+oy][x+ox]='0';map=grid.map(r=>r.join(''));const start=cfg.route[0],next=cfg.route[1],end=cfg.route.at(-1);player={x:start[0]+.5,y:start[1]+.5,a:Math.atan2(next[1]-start[1],next[0]-start[0])};exitPoint={x:end[0]+.5,y:end[1]+.5};jumpZ=jumpV=0;exitReady=false;enemies=[];const count=4+index*2,candidates=[];
+const MAP_W=28,MAP_H=24;
+let generatedRoute=[],routeKinds=[];
+function generateCorridor(index){
+ const grid=Array.from({length:MAP_H},()=>Array(MAP_W).fill('1'));
+ const rand=(min,max)=>min+Math.floor(Math.random()*(max-min+1));
+ // Three separated traversals keep the route legible while allowing bends.
+ const flip=Math.random()<.5,mirrorX=Math.random()<.5;
+ const points=[[3,3],[12+rand(-2,2),rand(3,6)],[24,rand(5,7)],
+ [24,rand(10,12)],[14+rand(-2,2),rand(11,14)],[3,rand(13,15)],
+ [3,rand(18,19)],[13+rand(-2,2),rand(18,20)],[24,20]];
+ const transform=([x,y])=>[mirrorX?MAP_W-1-x:x,flip?MAP_H-1-y:y];
+ const route=[points[0]],kinds=[];
+ for(let i=1;i<points.length;i++){
+  let [x,y]=points[i-1];const [tx,ty]=points[i];
+  const kind=(i===1?'diagonal':i===4?'stairs':['diagonal','stairs','elbow'][rand(0,2)]);
+  kinds.push(kind);
+  if(kind==='diagonal'){const steps=Math.max(Math.abs(tx-x),Math.abs(ty-y)),sx=x,sy=y;for(let j=1;j<=steps;j++)route.push([Math.round(sx+(tx-sx)*j/steps),Math.round(sy+(ty-sy)*j/steps)])}
+  else {let horizontal=Math.random()<.5;while(x!==tx||y!==ty){const amount=kind==='stairs'?rand(2,3):MAP_W;for(let j=0;j<amount;j++){if(horizontal&&x!==tx)x+=Math.sign(tx-x);else if(!horizontal&&y!==ty)y+=Math.sign(ty-y);else break;route.push([x,y])}horizontal=!horizontal}}
+ }
+ const transformed=route.map(transform);
+ // Widen every centerline cell, including diagonal joins, to a navigable corridor.
+ for(const [x,y] of transformed)for(let oy=-1;oy<=1;oy++)for(let ox=-1;ox<=1;ox++)if(x+ox>0&&x+ox<MAP_W-1&&y+oy>0&&y+oy<MAP_H-1)grid[y+oy][x+ox]='0';
+ generatedRoute=transformed;routeKinds=kinds;
+ return {grid: grid.map(row=>row.join('')),route:transformed};
+}
+function buildStage(index){const cfg=stages[index],layout=generateCorridor(index);map=layout.grid;const route=layout.route,start=route[0],next=route.find(p=>p[0]!==start[0]||p[1]!==start[1]),end=route.at(-1);player={x:start[0]+.5,y:start[1]+.5,a:Math.atan2(next[1]-start[1],next[0]-start[0])};exitPoint={x:end[0]+.5,y:end[1]+.5};jumpZ=jumpV=0;exitReady=false;enemies=[];const count=4+index*2,candidates=[];
 for(let y=1;y<map.length-1;y++)for(let x=1;x<map[y].length-1;x++){
 const p={x:x+.5,y:y+.5};
 if(!wall(p.x,p.y)&&Math.hypot(p.x-player.x,p.y-player.y)>=5&&Math.hypot(p.x-exitPoint.x,p.y-exitPoint.y)>=2)candidates.push(p)}
@@ -56,7 +81,7 @@ function render(){const horizon=H*.5;let grad=g.createLinearGradient(0,0,0,horiz
 const ordered=[...enemies.filter(e=>e.hp>0),{...exitPoint,exit:true}].sort((a,b)=>Math.hypot(b.x-player.x,b.y-player.y)-Math.hypot(a.x-player.x,a.y-player.y));for(const e of ordered){const dx=e.x-player.x,dy=e.y-player.y,z=dx*Math.cos(player.a)+dy*Math.sin(player.a),cross=-dx*Math.sin(player.a)+dy*Math.cos(player.a);if(z<.15)continue;const h=plane/z*.88,w=h*.5,cx=W/2+cross/z*plane,top=horizon+plane/z*(.5+jumpZ)-h;for(let x=Math.max(0,Math.floor(cx-w/2));x<Math.min(W,cx+w/2);x++){if(z<depth[x]){g.globalAlpha=e.flash?.6:1;g.drawImage(e.exit?(exitReady?openExit:closedExit):sprite,Math.max(0,Math.min(31,Math.floor((x-cx+w/2)/w*32))),0,1,64,x,top,1,h)}}g.globalAlpha=1}
 // Stylized arcade twin revolvers with a visible rounded cylinder.
 for(let i=0;i<2;i++){g.save();const sc=Math.min(W/780,H/470),b=state==='play'?Math.sin(clock*8)*2:0,recoil=flash&&side===i?14:0;g.translate(W*(i?.70:.30),H+55*sc+b+recoil);g.scale(sc*(i?-1:1),sc);g.fillStyle='#423e30';g.beginPath();g.moveTo(-70,0);g.lineTo(-36,-116);g.lineTo(14,-116);g.lineTo(50,0);g.fill();g.fillStyle='#b79d76';g.fillRect(-33,-129,58,57);g.fillStyle='#654537';g.fillRect(-22,-130,35,42);g.fillStyle='#a5bab5';g.fillRect(-17,-240,25,87);g.fillStyle='#4b6267';g.fillRect(-10,-237,16,81);g.fillStyle='#d2ddd0';g.fillRect(-17,-240,5,75);g.fillStyle='#2c3b40';g.beginPath();g.ellipse(-5,-151,30,26,0,0,Math.PI*2);g.fill();g.fillStyle='#8da4a1';g.beginPath();g.ellipse(-5,-154,26,22,0,0,Math.PI*2);g.fill();g.fillStyle='#40585e';for(let c=0;c<3;c++)g.fillRect(-24+c*16,-166,7,25);g.fillStyle='#d4dcc8';g.fillRect(-22,-175,34,4);g.fillStyle='#25393f';g.fillRect(-9,-247,9,9);g.fillStyle='#c1cdba';g.fillRect(15,-143,8,13);if(flash&&side===i){g.fillStyle='#ffe4a0';g.beginPath();for(let j=0;j<12;j++){const a=j*Math.PI/6,r=j%2?12:37;const x=-5+Math.cos(a)*r,y=-254+Math.sin(a)*r;j?g.lineTo(x,y):g.moveTo(x,y)}g.fill()}g.restore()}
-const ms=Math.min(5,W/150),ox=18,oy=mobile?110:H-20*ms-22;g.fillStyle='#0d171bb0';g.fillRect(ox-5,oy-5,24*ms+10,20*ms+10);for(let y=0;y<20;y++)for(let x=0;x<24;x++)if(map[y][x]==='1'){g.fillStyle='#82907980';g.fillRect(ox+x*ms,oy+y*ms,ms-1,ms-1)}g.fillStyle='#efc67c';for(const e of enemies)if(e.hp>0)g.fillRect(ox+e.x*ms-1,oy+e.y*ms-1,2,2);g.fillStyle=exitReady?'#7affaf':'#e9a65d';g.fillRect(ox+exitPoint.x*ms-3,oy+exitPoint.y*ms-3,6,6);g.fillStyle='#eef1d2';g.beginPath();g.arc(ox+player.x*ms,oy+player.y*ms,2.5,0,7);g.fill();g.strokeStyle='#eef1d2';g.beginPath();g.moveTo(ox+player.x*ms,oy+player.y*ms);g.lineTo(ox+(player.x+Math.cos(player.a))*ms,oy+(player.y+Math.sin(player.a))*ms);g.stroke();if(hit){g.fillStyle='#e7b96630';g.fillRect(0,0,W,H)}if(mobile){/* keep the minimap clear of the movement pad */}}
+const ms=Math.min(5,W/(MAP_W*6)),ox=18,oy=mobile?110:H-MAP_H*ms-22;g.fillStyle='#0d171bb0';g.fillRect(ox-5,oy-5,MAP_W*ms+10,MAP_H*ms+10);for(let y=0;y<MAP_H;y++)for(let x=0;x<MAP_W;x++)if(map[y][x]==='1'){g.fillStyle='#82907980';g.fillRect(ox+x*ms,oy+y*ms,ms-1,ms-1)}g.fillStyle='#efc67c';for(const e of enemies)if(e.hp>0)g.fillRect(ox+e.x*ms-1,oy+e.y*ms-1,2,2);g.fillStyle=exitReady?'#7affaf':'#e9a65d';g.fillRect(ox+exitPoint.x*ms-3,oy+exitPoint.y*ms-3,6,6);g.fillStyle='#eef1d2';g.beginPath();g.arc(ox+player.x*ms,oy+player.y*ms,2.5,0,7);g.fill();g.strokeStyle='#eef1d2';g.beginPath();g.moveTo(ox+player.x*ms,oy+player.y*ms);g.lineTo(ox+(player.x+Math.cos(player.a))*ms,oy+(player.y+Math.sin(player.a))*ms);g.stroke();if(hit){g.fillStyle='#e7b96630';g.fillRect(0,0,W,H)}if(mobile){/* keep the minimap clear of the movement pad */}}
 function frame(t){const dt=Math.min(.04,(t-last)/1000||0);last=t;if(state==='play')update(dt);render();requestAnimationFrame(frame)}
 $('start').onclick=()=>{try{audioCtx??=new(window.AudioContext||window.webkitAudioContext)();audioCtx.resume()}catch{}if(state!=='paused')reset();state='play';$('overlay').classList.add('hidden');if(!mobile){try{const p=cv.requestPointerLock?.();p?.catch(()=>{})}catch{}}};$('sprint').onclick=()=>{if(state!=='play')return;sprintTouch=!sprintTouch;$('sprint').classList.toggle('active',sprintTouch);$('sprint').setAttribute('aria-pressed',String(sprintTouch))};$('pause').onclick=pause;$('reload').onclick=reload;$('jump').onpointerdown=e=>{e.preventDefault();jump()};
 addEventListener('keydown',e=>{if(['Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code))e.preventDefault();keys[e.code]=true;if(e.code==='Space'&&!e.repeat)jump();if(e.code==='KeyR')reload();if(e.code==='Escape')pause()});addEventListener('keyup',e=>keys[e.code]=false);addEventListener('blur',pause);document.addEventListener('visibilitychange',()=>{if(document.hidden)pause()});document.addEventListener('pointerlockchange',()=>{if(!document.pointerLockElement&&!mobile)pause()});document.addEventListener('mousemove',e=>{if(state==='play'&&document.pointerLockElement)player.a+=e.movementX*.0027});
