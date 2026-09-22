@@ -67,7 +67,27 @@ enemies.push({...bossCell,boss:true,hp:[5,10,10,15,20][index],maxHp:[5,10,10,15,
 burstRemaining=0;cool=reloading=flash=hit=0;ammo=16;announce('STAGE '+(index+1)+' · '+cfg.name)}
 
 function findPath(from,to){const sx=Math.floor(from.x),sy=Math.floor(from.y),tx=Math.floor(to.x),ty=Math.floor(to.y),key=(x,y)=>x+','+y,queue=[[sx,sy]],prev=new Map([[key(sx,sy),null]]);for(let i=0;i<queue.length;i++){const [x,y]=queue[i];if(x===tx&&y===ty){const path=[];let p=[x,y];while(p){path.push({x:p[0]+.5,y:p[1]+.5});p=prev.get(key(...p))}return path.reverse().slice(1)}for(const [dx,dy] of [[1,0],[-1,0],[0,1],[0,-1]]){const nx=x+dx,ny=y+dy,k=key(nx,ny);if(!wall(nx+.5,ny+.5)&&!prev.has(k)){prev.set(k,[x,y]);queue.push([nx,ny])}}}return []}
-function enemyMove(e,dt,canSee,distance){if(e.boss)return;if(canSee&&distance<10)e.alert=true;const target=e.alert?player:e.patrol?.[e.patrolIndex];if(!target)return;if(!e.alert&&Math.hypot(target.x-e.x,target.y-e.y)<.2){e.patrolIndex=1-e.patrolIndex;e.repath=0;return}if(e.alert&&canSee&&distance<1.7)return;e.repath=(e.repath||0)-dt;if(e.repath<=0){e.path=findPath(e,target);e.repath=.5}let goal=e.path?.[0];if(goal&&Math.hypot(goal.x-e.x,goal.y-e.y)<.09){e.path.shift();goal=e.path[0]}if(!goal)goal=target;const dx=goal.x-e.x,dy=goal.y-e.y,d=Math.hypot(dx,dy);if(d<.01)return;const step=Math.min(d,dt*1.2*(e.alert?1.05+wave*.1:.65));move(e,dx/d*step,dy/d*step)}
+function moveBoss(e,dt){
+if(e.hp<=0)return;
+e.wanderWait=Math.max(0,(e.wanderWait||0)-dt);if(e.wanderWait>0)return;
+if(!e.wanderPath?.length){
+ // Bounded flood fill keeps both the route and destination near the exit.
+ const home=e.home||exitPoint,sx=Math.floor(e.x),sy=Math.floor(e.y),queue=[[sx,sy]],prev=new Map([[sx+','+sy,null]]),options=[];
+ for(let i=0;i<queue.length;i++){const [x,y]=queue[i];if(Math.hypot(x+.5-e.x,y+.5-e.y)>=1)options.push([x,y]);
+ for(const [dx,dy] of [[1,0],[-1,0],[0,1],[0,-1]]){const nx=x+dx,ny=y+dy,key=nx+','+ny;
+ if(!wall(nx+.5,ny+.5)&&Math.hypot(nx+.5-home.x,ny+.5-home.y)<=3.5&&!prev.has(key)){prev.set(key,[x,y]);queue.push([nx,ny])}}}
+ if(!options.length){e.wanderWait=.5;return}
+ let p=options[Math.floor(Math.random()*options.length)],path=[];
+ while(p){path.push({x:p[0]+.5,y:p[1]+.5});p=prev.get(p.join(','))}
+ // Visit the current cell center first to avoid cutting obstacle corners.
+ e.wanderPath=path.reverse();
+}
+const goal=e.wanderPath[0],dx=goal.x-e.x,dy=goal.y-e.y,d=Math.hypot(dx,dy),step=Math.min(d,.65*dt);
+if(d>.001)move(e,dx/d*step,dy/d*step);
+if(Math.hypot(goal.x-e.x,goal.y-e.y)<.025){e.wanderPath.shift();if(!e.wanderPath.length)e.wanderWait=.4+Math.random()*.8}
+}
+
+function enemyMove(e,dt,canSee,distance){if(e.boss){moveBoss(e,dt);return}if(canSee&&distance<10)e.alert=true;const target=e.alert?player:e.patrol?.[e.patrolIndex];if(!target)return;if(!e.alert&&Math.hypot(target.x-e.x,target.y-e.y)<.2){e.patrolIndex=1-e.patrolIndex;e.repath=0;return}if(e.alert&&canSee&&distance<1.7)return;e.repath=(e.repath||0)-dt;if(e.repath<=0){e.path=findPath(e,target);e.repath=.5}let goal=e.path?.[0];if(goal&&Math.hypot(goal.x-e.x,goal.y-e.y)<.09){e.path.shift();goal=e.path[0]}if(!goal)goal=target;const dx=goal.x-e.x,dy=goal.y-e.y,d=Math.hypot(dx,dy);if(d<.01)return;const step=Math.min(d,dt*1.2*(e.alert?1.05+wave*.1:.65));move(e,dx/d*step,dy/d*step)}
 
 function jump(){if(state==='play'&&jumpZ===0&&jumpV===0){jumpV=3.2;tone(330,.08)}}
 function objective(){const boss=enemies.find(e=>e.boss);const left=enemies.filter(e=>!e.boss&&e.hp>0).length;$('objective').textContent=stages[wave-1].name+' · '+(boss&&boss.hp>0?'보스 '+boss.hp+'/'+boss.maxHp+' · 일반 적 '+left+'명':'보스 처치! 출구로 이동 →');return left}
